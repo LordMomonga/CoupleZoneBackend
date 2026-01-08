@@ -1,4 +1,5 @@
 import { gameData } from "../data/actionVeriteData.js";
+import { gameData as quiDeNousData } from "../data/QuiDeNous2.js";
 
 export default (io, socket) => {
   const coupleRoom = socket.user?.couple?.toString();
@@ -15,6 +16,12 @@ export default (io, socket) => {
   };
 
   updatePlayers();
+
+      updatePlayers();
+  socket.on("disconnect", () => {
+  console.log(`${socket.user.username} s'est déconnecté`);
+  updatePlayers();
+});
 
   // Début du jeu
   socket.on("game:start", () => {
@@ -40,5 +47,75 @@ export default (io, socket) => {
 
     io.to(coupleRoom).emit("action-verite:result", { type, question, player });
   });
+
+
+  // =====================
+  // 🎮 Start game
+  // =====================
+ socket.on("qui-de-nous-deux:start", () => {
+    const clients = [...(io.sockets.adapter.rooms.get(coupleRoom) || [])];
+    if (clients.length < 2) {
+      socket.emit("game:wait", "En attente d'un autre joueur...");
+      return;
+    }
+
+    games[coupleRoom] = {
+      questions: [...quiDeNousData],
+      currentQuestion: "",
+      currentTurn: clients[0],
+      scores: {
+        [clients[0]]: 0,
+        [clients[1]]: 0,
+      },
+    };
+
+    sendNextQuestion(io, coupleRoom);
+  });
+
+
+
+  // =====================
+  // 📩 Answer
+  // =====================
+  socket.on("qui-de-nous-deux:answer", ({ answer }) => {
+    const game = games[coupleRoom];
+    if (!game) return;
+
+    const players = Object.keys(game.scores);
+    const otherPlayer = players.find((id) => id !== socket.id);
+
+    if (answer === "moi") {
+      game.scores[socket.id]++;
+    } else {
+      game.scores[otherPlayer]++;
+    }
+
+    // switch turn
+    game.currentTurn = otherPlayer;
+
+    sendNextQuestion(io, coupleRoom);
+  });
 };
 
+// =====================
+// 🔁 Next question
+// =====================
+function sendNextQuestion(io, roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  if (game.questions.length === 0) {
+    io.to(roomId).emit("qui-de-nous-deux:end", game.scores);
+    return;
+  }
+
+  const index = Math.floor(Math.random() * game.questions.length);
+  const question = game.questions.splice(index, 1)[0];
+  game.currentQuestion = question;
+
+  io.to(roomId).emit("qui-de-nous-deux:question", {
+    question,
+    currentTurn: game.currentTurn,
+    scores: game.scores,
+  });
+}
