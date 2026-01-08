@@ -1,6 +1,8 @@
 import { gameData } from "../data/actionVeriteData.js";
 import { gameData as quiDeNousData } from "../data/QuiDeNous2.js";
 
+const games = {}; // ✅ OBLIGATOIRE
+
 export default (io, socket) => {
   const coupleRoom = socket.user?.couple?.toString();
   if (!coupleRoom) return;
@@ -8,24 +10,36 @@ export default (io, socket) => {
   socket.join(coupleRoom);
   console.log(`${socket.user.username} a rejoint la room ${coupleRoom}`);
 
-  // Notifier tout le monde dans la room de la liste des joueurs
+  // =====================
+  // 👥 Update players
+  // =====================
   const updatePlayers = () => {
-    const clients = Array.from(io.sockets.adapter.rooms.get(coupleRoom) || []);
-    const players = clients.map((id) => io.sockets.sockets.get(id).user.username);
+    const clients = Array.from(
+      io.sockets.adapter.rooms.get(coupleRoom) || []
+    );
+
+    const players = clients
+      .map((id) => io.sockets.sockets.get(id))
+      .filter(Boolean) // ✅ évite crash
+      .map((s) => s.user.username);
+
     io.to(coupleRoom).emit("game:players", players);
   };
 
+  // 🟢 à la connexion
   updatePlayers();
 
-      updatePlayers();
+  // 🔴 à la déconnexion
   socket.on("disconnect", () => {
-  console.log(`${socket.user.username} s'est déconnecté`);
-  updatePlayers();
-});
+    console.log(`${socket.user.username} s'est déconnecté`);
+    updatePlayers();
+  });
 
-  // Début du jeu
+  // =====================
+  // 🎮 Start game
+  // =====================
   socket.on("game:start", () => {
-    const clients = Array.from(io.sockets.adapter.rooms.get(coupleRoom) || []);
+    const clients = [...(io.sockets.adapter.rooms.get(coupleRoom) || [])];
     if (clients.length < 2) {
       socket.emit("game:wait", "En attente d'un autre joueur...");
       return;
@@ -33,7 +47,9 @@ export default (io, socket) => {
     io.to(coupleRoom).emit("game:started");
   });
 
-  // Exemple Action ou Vérité
+  // =====================
+  // 🎯 Action / Vérité
+  // =====================
   socket.on("action-verite:play", ({ type, niveau }) => {
     const data = gameData[niveau];
     if (!data) return;
@@ -41,27 +57,28 @@ export default (io, socket) => {
     const list = type === "action" ? data.actions : data.verites;
     const question = list[Math.floor(Math.random() * list.length)];
 
-    const clients = Array.from(io.sockets.adapter.rooms.get(coupleRoom) || []);
-    const randomPlayerId = clients[Math.floor(Math.random() * clients.length)];
-    const player = io.sockets.sockets.get(randomPlayerId).user.username;
+    const clients = [...(io.sockets.adapter.rooms.get(coupleRoom) || [])];
+    const randomId = clients[Math.floor(Math.random() * clients.length)];
+    const player = io.sockets.sockets.get(randomId)?.user.username;
 
-    io.to(coupleRoom).emit("action-verite:result", { type, question, player });
+    if (!player) return;
+
+    io.to(coupleRoom).emit("action-verite:result", {
+      type,
+      question,
+      player,
+    });
   });
 
-
   // =====================
-  // 🎮 Start game
+  // 🧠 Qui de nous deux
   // =====================
- socket.on("qui-de-nous-deux:start", () => {
+  socket.on("qui-de-nous-deux:start", () => {
     const clients = [...(io.sockets.adapter.rooms.get(coupleRoom) || [])];
-    if (clients.length < 2) {
-      socket.emit("game:wait", "En attente d'un autre joueur...");
-      return;
-    }
+    if (clients.length < 2) return;
 
     games[coupleRoom] = {
       questions: [...quiDeNousData],
-      currentQuestion: "",
       currentTurn: clients[0],
       scores: {
         [clients[0]]: 0,
@@ -72,11 +89,6 @@ export default (io, socket) => {
     sendNextQuestion(io, coupleRoom);
   });
 
-
-
-  // =====================
-  // 📩 Answer
-  // =====================
   socket.on("qui-de-nous-deux:answer", ({ answer }) => {
     const game = games[coupleRoom];
     if (!game) return;
@@ -84,15 +96,10 @@ export default (io, socket) => {
     const players = Object.keys(game.scores);
     const otherPlayer = players.find((id) => id !== socket.id);
 
-    if (answer === "moi") {
-      game.scores[socket.id]++;
-    } else {
-      game.scores[otherPlayer]++;
-    }
+    if (answer === "moi") game.scores[socket.id]++;
+    else game.scores[otherPlayer]++;
 
-    // switch turn
     game.currentTurn = otherPlayer;
-
     sendNextQuestion(io, coupleRoom);
   });
 };
@@ -111,7 +118,6 @@ function sendNextQuestion(io, roomId) {
 
   const index = Math.floor(Math.random() * game.questions.length);
   const question = game.questions.splice(index, 1)[0];
-  game.currentQuestion = question;
 
   io.to(roomId).emit("qui-de-nous-deux:question", {
     question,
