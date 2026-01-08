@@ -51,7 +51,7 @@ export default (io, socket) => {
 
   if (!firstPlayer) return;
 
-    io.to(coupleRoom).emit("game:started"), { firstPlayer};
+    io.to(coupleRoom).emit("game:started", { firstPlayer});
   });
 
   // =====================
