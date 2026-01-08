@@ -44,7 +44,14 @@ export default (io, socket) => {
       socket.emit("game:wait", "En attente d'un autre joueur...");
       return;
     }
-    io.to(coupleRoom).emit("game:started");
+
+    const randomId = clients[Math.floor(Math.random() * clients.length)];
+  const firstPlayer =
+    io.sockets.sockets.get(randomId)?.user.username;
+
+  if (!firstPlayer) return;
+
+    io.to(coupleRoom).emit("game:started"), { firstPlayer};
   });
 
   // =====================
