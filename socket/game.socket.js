@@ -1,5 +1,6 @@
 import { gameData } from "../data/actionVeriteData.js";
 import { gameData as quiDeNousData } from "../data/QuiDeNous2.js";
+import { shuffleArray } from "../utils/shufleArray.js";
 
 const games = {}; // ✅ OBLIGATOIRE
 
@@ -80,55 +81,98 @@ export default (io, socket) => {
   // =====================
   // 🧠 Qui de nous deux
   // =====================
+  
   socket.on("qui-de-nous-deux:start", () => {
+
+      if (games[coupleRoom]) return; // ⛔ empêche double start
+
     const clients = [...(io.sockets.adapter.rooms.get(coupleRoom) || [])];
     if (clients.length < 2) return;
 
-    games[coupleRoom] = {
-      questions: [...quiDeNousData],
-      currentTurn: clients[0],
-      scores: {
-        [clients[0]]: 0,
-        [clients[1]]: 0,
-      },
-    };
+    const players = clients
+  .map(id => io.sockets.sockets.get(id))
+  .filter(Boolean)
+  .map(s => s.user.username);
 
-    sendNextQuestion(io, coupleRoom);
-  });
-
-  socket.on("qui-de-nous-deux:answer", ({ answer }) => {
-    const game = games[coupleRoom];
-    if (!game) return;
-
-    const players = Object.keys(game.scores);
-    const otherPlayer = players.find((id) => id !== socket.id);
-
-    if (answer === "moi") game.scores[socket.id]++;
-    else game.scores[otherPlayer]++;
-
-    game.currentTurn = otherPlayer;
-    sendNextQuestion(io, coupleRoom);
-  });
+games[coupleRoom] = {
+  questions: [...shuffleArray(quiDeNousData)],
+  votes: {},
+  scores: {
+    [players[0]]: 0,
+    [players[1]]: 0,
+  },
 };
+
+
+    sendNextQuestionQDnd(io, coupleRoom);
+  });
+
+  socket.on("qui-de-nous-deux:vote", (payload) => {
+  // roomId = la room du couple
+  const roomId = socket.user?.couple?.toString();
+  if (!roomId) return;
+
+  handleVoteQDnd(io, roomId, socket, payload);
+});
+
+
+
 
 // =====================
 // 🔁 Next question
 // =====================
-function sendNextQuestion(io, roomId) {
+
+function sendNextQuestionQDnd(io, roomId){
   const game = games[roomId];
   if (!game) return;
 
   if (game.questions.length === 0) {
     io.to(roomId).emit("qui-de-nous-deux:end", game.scores);
+    delete games[roomId];
     return;
   }
+  const question = game.questions.shift();
 
-  const index = Math.floor(Math.random() * game.questions.length);
-  const question = game.questions.splice(index, 1)[0];
+  game.votes = {};
 
   io.to(roomId).emit("qui-de-nous-deux:question", {
     question,
-    currentTurn: game.currentTurn,
     scores: game.scores,
   });
+
+}
+
+function handleVoteQDnd(io, roomId, socket, { type }) {
+  const game = games[roomId];
+  if (!game) return;
+
+  const voter = socket.user.username;
+
+  // Empêche double vote
+  if (game.votes[voter]) return;
+
+  // Enregistre le vote
+  game.votes[voter] = type;
+
+  console.log("Vote reçu :", voter, type);
+
+  // Quand les deux joueurs ont voté
+  if (Object.keys(game.votes).length === 2) {
+    Object.entries(game.votes).forEach(([player, voteType]) => {
+      if (voteType === "moi") {
+        game.scores[player] = (game.scores[player] || 0) + 1;
+      }
+    });
+
+    console.log("Votes:", game.votes);
+    console.log("Scores:", game.scores);
+    console.log("Questions restantes:", game.questions.length);
+
+    sendNextQuestionQDnd(io, roomId);
+  }
+
+  io.to(roomId).emit("qui-de-nous-deux:update-scores", game.scores);
+}
+
+
 }
